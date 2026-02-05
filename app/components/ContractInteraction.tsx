@@ -18,6 +18,10 @@ export default function ContractInteraction() {
   const [error, setError] = useState<string | null>(null);
   const [inputMethod, setInputMethod] = useState('abi'); // 'abi' or 'direct'
   const [rawCalldata, setRawCalldata] = useState('');
+  const [gasLimit, setGasLimit] = useState('');
+  const [gasPrice, setGasPrice] = useState('');
+  const [maxFeePerGas, setMaxFeePerGas] = useState('');
+  const [maxPriorityFeePerGas, setMaxPriorityFeePerGas] = useState('');
 
   // Handle contract interaction
   const handleContractInteraction = async () => {
@@ -31,6 +35,44 @@ export default function ContractInteraction() {
     setResult('');
 
     try {
+      const buildGasOverrides = () => {
+        const overrides: Record<string, unknown> = {};
+
+        const trimmedGasLimit = gasLimit.trim();
+        const trimmedGasPrice = gasPrice.trim();
+        const trimmedMaxFee = maxFeePerGas.trim();
+        const trimmedPriorityFee = maxPriorityFeePerGas.trim();
+
+        if (trimmedGasLimit) {
+          const limitNum = Number(trimmedGasLimit);
+          if (!Number.isFinite(limitNum) || limitNum <= 0) {
+            throw new Error('Gas limit must be a positive number');
+          }
+          overrides.gasLimit = ethers.BigNumber.from(Math.trunc(limitNum));
+        }
+
+        if (trimmedGasPrice && (trimmedMaxFee || trimmedPriorityFee)) {
+          throw new Error('Use either legacy gas price or EIP-1559 max fees, not both');
+        }
+
+        if (trimmedGasPrice) {
+          const parsedGasPrice = ethers.utils.parseUnits(trimmedGasPrice, 'gwei');
+          overrides.gasPrice = parsedGasPrice;
+        }
+
+        if (trimmedMaxFee) {
+          const parsedMaxFee = ethers.utils.parseUnits(trimmedMaxFee, 'gwei');
+          overrides.maxFeePerGas = parsedMaxFee;
+        }
+
+        if (trimmedPriorityFee) {
+          const parsedPriorityFee = ethers.utils.parseUnits(trimmedPriorityFee, 'gwei');
+          overrides.maxPriorityFeePerGas = parsedPriorityFee;
+        }
+
+        return overrides;
+      };
+
       if (inputMethod === 'abi') {
         // Parse ABI
         let contractAbi;
@@ -65,8 +107,10 @@ export default function ContractInteraction() {
         if (functionType === 'call') {
           response = await contract[functionName](...parsedArgs);
         } else {
+          const gasOverrides = buildGasOverrides();
           const tx = await contract[functionName](...parsedArgs, {
-            value: ethers.utils.parseEther(valueInEth || '0')
+            value: ethers.utils.parseEther(valueInEth || '0'),
+            ...gasOverrides
           });
           await tx.wait();
           response = tx.hash;
@@ -89,18 +133,21 @@ export default function ContractInteraction() {
         }
 
         let response;
+        const gasOverrides = buildGasOverrides();
         if (functionType === 'call') {
           // Static call with raw calldata
           response = await provider.call({
             to: contractAddress,
-            data: rawCalldata
+            data: rawCalldata,
+            ...gasOverrides
           });
         } else {
           // Send transaction with raw calldata
           const tx = await signer.sendTransaction({
             to: contractAddress,
             data: rawCalldata,
-            value: ethers.utils.parseEther(valueInEth || '0')
+            value: ethers.utils.parseEther(valueInEth || '0'),
+            ...gasOverrides
           });
           await tx.wait();
           response = tx.hash;
@@ -229,6 +276,63 @@ export default function ContractInteraction() {
             />
           </div>
         )}
+
+        <div className="border border-gray-200 dark:border-gray-800 rounded-lg p-4">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-sm font-semibold">Gas Settings (optional)</h3>
+            <span className="text-[11px] text-gray-500">Leave blank to auto-estimate</span>
+          </div>
+
+          <div className="grid sm:grid-cols-2 gap-3">
+            <div>
+              <label className="block text-sm font-medium mb-1">Gas Limit</label>
+              <input
+                type="text"
+                value={gasLimit}
+                onChange={(e) => setGasLimit(e.target.value)}
+                placeholder="e.g. 250000"
+                className="w-full p-2 border border-gray-300 dark:border-gray-700 rounded-md bg-white dark:bg-gray-800"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium mb-1">Gas Price (gwei)</label>
+              <input
+                type="text"
+                value={gasPrice}
+                onChange={(e) => setGasPrice(e.target.value)}
+                placeholder="Legacy tx only"
+                className="w-full p-2 border border-gray-300 dark:border-gray-700 rounded-md bg-white dark:bg-gray-800"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium mb-1">Max Fee Per Gas (gwei)</label>
+              <input
+                type="text"
+                value={maxFeePerGas}
+                onChange={(e) => setMaxFeePerGas(e.target.value)}
+                placeholder="EIP-1559"
+                className="w-full p-2 border border-gray-300 dark:border-gray-700 rounded-md bg-white dark:bg-gray-800"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium mb-1">Max Priority Fee Per Gas (gwei)</label>
+              <input
+                type="text"
+                value={maxPriorityFeePerGas}
+                onChange={(e) => setMaxPriorityFeePerGas(e.target.value)}
+                placeholder="EIP-1559 tip"
+                className="w-full p-2 border border-gray-300 dark:border-gray-700 rounded-md bg-white dark:bg-gray-800"
+              />
+            </div>
+          </div>
+
+          <p className="text-xs text-gray-500 mt-2">
+            Do not combine legacy Gas Price with EIP-1559 Max Fee/Max Priority. Leave fields empty to let the wallet/provider estimate.
+          </p>
+        </div>
 
         {connected && chainId && (
           <div className="p-3 bg-blue-50 dark:bg-blue-900/30 rounded-lg">
